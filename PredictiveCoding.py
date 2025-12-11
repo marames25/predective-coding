@@ -6,7 +6,7 @@ from PIL import Image
 #                MAIN MENU
 ##############################################
 
-def menu():
+def main_menu():
     """Display main menu and return user choice."""
     print("\n============ Vector Quantization Menu ============")
     print("1. Compress Image")
@@ -17,14 +17,17 @@ def menu():
     while True:
         try:
             choice = int(input("Enter your choice (1-3): "))
-            if choice in [1, 2, 3]:
-                return choice
-            print("Invalid choice. Please enter 1, 2, or 3.")
+            if choice == 1:
+                compress_image()
+            elif choice == 2:
+                decompress_image()
+            elif choice == 3:
+                print("Exiting the program. Goodbye!")
+                break
         except ValueError:
             print("Invalid input. Please enter a number.")
 
-def main_menu():
-    pass
+
 
 
 ##############################################
