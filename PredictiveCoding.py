@@ -3,17 +3,15 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 ##############################################
-#                MAIN MENU
+# MAIN MENU
 ##############################################
-
 def main_menu():
-    """Display main menu and return user choice."""
     print("\n============ Vector Quantization Menu ============")
-    print("1. Compress Image")
+    print("1. Compress Image (Grayscale or RGB)")
     print("2. Decompress Image")
     print("3. Exit")
     print("==================================================\n")
-    
+
     while True:
         try:
             choice = int(input("Enter your choice (1-3): "))
@@ -27,61 +25,43 @@ def main_menu():
         except ValueError:
             print("Invalid input. Please enter a number.")
 
-
-
-
 ##############################################
-#           USER INPUT FUNCTIONS
+# USER INPUT
 ##############################################
-
 def get_image_path():
-    """Ask user for the image file path."""
-    path = input("Enter the image path : ").strip()
-    
-    if path == "":
+    path = input("Enter the image path: ").strip()
+    if not path:
         raise ValueError("Image path cannot be empty.")
-    
-    if not path.lower().endswith(('.png', '.jpg', '.jpeg')):
-        raise ValueError("Unsupported file format. Please provide a PNG or JPG image.")
-    
     return path
 
-
 def get_quantization_bits():
-    """Ask user for number of bits (default = 2)."""
     while True:
         bits_input = input("Enter number of bits for quantization (default 2): ").strip()
-        if bits_input == "":
+        if not bits_input:
             return 2
         try:
             bits = int(bits_input)
-            if bits <= 0 or bits > 8:
-                print("Please enter a positive integer between 1 and 8.")
-                continue
-            return bits
+            if 1 <= bits <= 8:
+                return bits
+            print("Please enter a number between 1 and 8.")
         except ValueError:
-            print("Invalid input. Please enter a positive integer.")
-
+            print("Invalid input. Please enter an integer.")
 
 ##############################################
-#          IMAGE LOADING / SAVING
+# LOAD / SAVE IMAGE
 ##############################################
-
 def load_image(image_path):
-    """Load image as numpy array."""
-    img = Image.open(image_path).convert('L')  # Convert to grayscale
+    img = Image.open(image_path).convert("RGB")
     return np.array(img)
 
 def save_image(array, filename):
-    """Save numpy array as image."""
-    img = Image.fromarray(array.astype(np.uint8))
-    img.save(filename)
-
+    if array.ndim == 2:
+        array = np.stack([array] * 3, axis=-1)
+    Image.fromarray(array.astype(np.uint8)).save(filename)
 
 ##############################################
-#        2D PREDICTOR (MANDATORY)
+# 2D ADAPTIVE PREDICTOR
 ##############################################
-
 def predictor_2d(image):
     """
     Adaptive 2D Predictor (as in the provided lecture slide):
@@ -98,204 +78,161 @@ def predictor_2d(image):
         elif B >= max(A, C): P = min(A, C)
         else:                P = A + C - B
     """
-    img = image.astype(np.int16) # int16 is used to avoid overflow
-    rows, cols = img.shape
-    predicted = np.zeros_like(img, dtype=np.int16)
+    if image.ndim == 2:
+        return _predictor_2d_channel(image)
+    pred = np.zeros_like(image, dtype=np.int16)
+    for c in range(image.shape[2]):
+        pred[:, :, c] = _predictor_2d_channel(image[:, :, c])
+    return pred
 
-    for i in range(rows):
-        for j in range(cols):
+def _predictor_2d_channel(channel):
+    img = channel.astype(np.int16)
+    h, w = img.shape
+    pred = np.zeros_like(img, dtype=np.int16)
+    for i in range(h):
+        for j in range(w):
             if i == 0 and j == 0:
-                predicted[i, j] = img[i, j]
+                pred[i,j] = img[i,j]
                 continue
-        
-            A = img[i, j-1]
-            B = img[i-1, j-1]
-            C = img[i-1, j]
-
+            A = img[i,j-1] if j > 0 else img[i,j]
+            C = img[i-1,j] if i > 0 else img[i,j]
+            B = img[i-1,j-1] if i > 0 and j > 0 else img[i,j]
             if B <= min(A, C):
                 P = max(A, C)
             elif B >= max(A, C):
                 P = min(A, C)
             else:
                 P = A + C - B
-
-            predicted[i, j] = P
-    return predicted
+            pred[i,j] = P
+    return pred
 
 ##############################################
-#         ERROR COMPUTATION
+# ERROR & QUANTIZATION
 ##############################################
-
 def compute_error(original, predicted):
-    """Compute prediction error (original - predicted)."""
-    if original.shape != predicted.shape:
-        raise ValueError("Original and predicted images must have the same shape.")
-    
-    error = original.astype(np.int16) - predicted.astype(np.int16)
-    return error
+    return original.astype(np.int16) - predicted.astype(np.int16)
 
-
-##############################################
-#          UNIFORM QUANTIZER
-##############################################
-
-def compute_quantization_params(bits , min_val=-255, max_val=255):
-    """
-    Given number of bits:
-      - compute number of levels
-      - find step size
-      - generate quantization codebook (binary)
-      - generate dequantized values
-    Returns: step, q_levels, binary_codes, dequant_values
-    """
-
+def compute_quantization_params(bits):
     q_levels = 2 ** bits
-    step = (max_val - min_val) / q_levels
-    binary_codes = [format(i, f'0{bits}b') for i in range(q_levels)]
-    dequant_values = []
-    for i in range(q_levels):
-        dequant_values.append(min_val + (i + 0.5) * step)  # Centering around 0
-        
-    return step, q_levels, binary_codes, dequant_values
-    
+    step = 510.0 / q_levels
+    return step, q_levels
 
+def quantize_error(error, step, q_levels):
+    return np.clip(np.floor((error + 255) / step), 0, q_levels-1).astype(np.int16)
 
-def quantize_error(error, step , min_val=-255, q_levels=None): #َََQ
-    """Quantize prediction error."""
-    q_error = np.floor((error - min_val) / step).astype(np.int16)
-    q_error = np.clip(q_error, 0, q_levels - 1)  # Ensure within range
-    return q_error
-
-
-def dequantize(q_error, step, min_val=-255):#Q-1
-    """Convert quantized values back to integers."""
-    deq = ((q_error + 0.5) * step + min_val).astype(np.int16)      # midpoint reconstruction
-    return deq
-
+def dequantize(q_error, step):
+    return ((q_error + 0.5) * step - 255).astype(np.int16)
 
 ##############################################
-#        IMAGE RECONSTRUCTION
+# RECONSTRUCTION
 ##############################################
-
-def reconstruct_image(predicted, dequantized):
-    """Reconstruct image from predicted + dequantized error."""
-    reconstructed = predicted.astype(np.int16) + dequantized.astype(np.int16)
-    reconstructed = np.clip(reconstructed, 0, 255).astype(np.uint8)
-    return reconstructed
+def reconstruct_image(predicted, dequantized_error):
+    return np.clip(predicted.astype(np.int16) + dequantized_error, 0, 255).astype(np.uint8)
 
 ##############################################
-#          DISPLAY REQUIRED IMAGES
+# DISPLAY - FIXED FOR NUMPY 2.0+
 ##############################################
+def show_results(original, predicted, error, q_error, deq, reconstructed):
+    def to_rgb(arr):
+        return np.stack([arr]*3, axis=-1) if arr.ndim == 2 else arr
 
-def show_results(original, predicted, error, q_error, deq, final):
-    """
-    Display the six required images:
-     1. Original
-     2. Predicted
-     3. Error
-     4. Quantized error
-     5. De-quantized error
-     6. Decompressed image
-    """
-    titles = ["Original",
-            "Predicted",
-            "Error",
-            "Quantized Error",
-            "Dequantized Error",
-            "Reconstructed"]
-    images = [original, predicted, error, q_error, deq, final]
-    plt.figure(figsize=(12,8))
+    def error_vis(e):
+        e = e.astype(float)
+        mn, mx = e.min(), e.max()
+        if mx == mn:
+            return np.zeros_like(e, dtype=np.uint8)
+        return ((e - mn) / (mx - mn) * 255).astype(np.uint8)
+
+    titles = ["Original", "Predicted", "Error", "Quantized Error", "Dequantized Error", "Reconstructed"]
+    imgs = [original, predicted, error, q_error, deq, reconstructed]
+
+    plt.figure(figsize=(15, 10))
     for i in range(6):
         plt.subplot(2, 3, i+1)
-        plt.imshow(images[i], cmap='gray')
+        if i >= 2 and i <= 4:  # error images
+            vis = error_vis(imgs[i])
+            plt.imshow(to_rgb(vis))
+        else:
+            plt.imshow(to_rgb(imgs[i]))
         plt.title(titles[i])
         plt.axis("off")
     plt.tight_layout()
     plt.show()
-    
-##############################################
-#         COMPRESSION / DECOMPRESSION
-##############################################
 
+##############################################
+# COMPRESS & DECOMPRESS
+##############################################
 def compress_image():
-    """
-    - Get user inputs
-    - Load image
-    - Apply predictor
-    - Compute error
-    - Quantize error
-    - Dequantize
-    - Reconstruct
-    - Display 6 images
-    - Calculate compression ratio
-    """
-    print("\n -----Compressing Image----")
+    print("\n----- Compressing Image -----")
     path = get_image_path()
     bits = get_quantization_bits()
-    
-    original = load_image(path)
-    predicted = predictor_2d(original)
-    error_img = compute_error(original, predicted)
-    
-    step, q_levels, binary_codes, dequant_vals = compute_quantization_params(bits)
-    q_error = quantize_error(error_img, step, q_levels=q_levels)
-    deq = dequantize(q_error, step)
 
-    final = reconstruct_image(predicted, deq)
+    original = load_image(path)
+    is_color = original.ndim == 3
+    print(f"Image shape: {original.shape} → {'RGB' if is_color else 'Grayscale'}")
+
+    predicted = predictor_2d(original)
+    error = compute_error(original, predicted)
+
+    step, q_levels = compute_quantization_params(bits)
+
+    # Quantize
+    if is_color:
+        q_error = np.zeros_like(error, dtype=np.int16)
+        for c in range(3):
+            q_error[:,:,c] = quantize_error(error[:,:,c], step, q_levels)
+    else:
+        q_error = quantize_error(error, step, q_levels)
+
+    # Dequantize for display
+    if is_color:
+        deq = np.zeros_like(q_error, dtype=np.int16)
+        for c in range(3):
+            deq[:,:,c] = dequantize(q_error[:,:,c], step)
+    else:
+        deq = dequantize(q_error, step)
+
+    reconstructed = reconstruct_image(predicted, deq)
 
     np.savez("compressed_output.npz",
-            q_error=q_error,
-            predicted=predicted,
-            bits=bits,
-            shape=original.shape)
-    print("Compressed file saved : compressed_output.npz")
-    
-    original_bits = original.size*8
-    compressed_bits = original.size * bits
-    ratio = compute_compression_ratio(original_bits, compressed_bits)
+             q_error=q_error, predicted=predicted, bits=bits,
+             shape=original.shape, is_color=is_color)
 
-    
-    print("Compression Ratio =", round(ratio, 2), ":1")
-    
-    show_results(original, predicted, error_img, q_error, deq, final)
+    ratio = (original.size * 8) / (q_error.size * bits)
+    print(f"Compressed file → compressed_output.npz")
+    print(f"Compression Ratio = {ratio:.2f} : 1")
+
+    show_results(original, predicted, error, q_error, deq, reconstructed)
 
 def decompress_image():
-    """Reverse steps for decompression."""
-    print("\n -----Decompressing Image----")
-    
-    data = np.load("compressed_output.npz")
+    print("\n----- Decompressing Image -----")
+    try:
+        data = np.load("compressed_output.npz")
+    except FileNotFoundError:
+        print("No compressed file found!")
+        return
+
     q_error = data["q_error"]
-    predicted  = data ["predicted"]
+    predicted = data["predicted"]
     bits = int(data["bits"])
-    shape =  data["shape"]
-    
-    step, q_levels, binary_codes, dequant_vals = compute_quantization_params(bits)
-    deq = dequantize(q_error, step)
-    
+    is_color = data.get("is_color", False)
+
+    step, _ = compute_quantization_params(bits)
+
+    if is_color:
+        deq = np.zeros_like(q_error, dtype=np.int16)
+        for c in range(3):
+            deq[:,:,c] = dequantize(q_error[:,:,c], step)
+    else:
+        deq = dequantize(q_error, step)
+
     final = reconstruct_image(predicted, deq)
-    
-    show_results(final, predicted, final - predicted, q_error, deq, final)
-    
     save_image(final, "decompressed_image.png")
-    print("Decompressed image saved : decompressed_image.png")
-
-    
-
-    
-##############################################
-#          COMPRESSION RATIO
-##############################################
-
-def compute_compression_ratio(original_bits, compressed_bits):
-    """Return compression ratio."""
-    if compressed_bits == 0:
-        return float('inf')  # Avoid division by zero
-    return original_bits / compressed_bits
-
+    print("Decompressed image saved → decompressed_image.png")
+    show_results(final, predicted, final-predicted.astype(np.int16), q_error, deq, final)
 
 ##############################################
-#               START
+# START
 ##############################################
-
 if __name__ == "__main__":
     main_menu()
