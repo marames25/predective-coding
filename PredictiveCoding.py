@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-
+import matplotlib.pyplot as plt
 
 ##############################################
 #                MAIN MENU
@@ -36,7 +36,7 @@ def main_menu():
 
 def get_image_path():
     """Ask user for the image file path."""
-    path = input("Enter the path to the grayscale image file: ").strip()
+    path = input("Enter the image path : ").strip()
     
     if path == "":
         raise ValueError("Image path cannot be empty.")
@@ -160,14 +160,14 @@ def compute_quantization_params(bits , min_val=-255, max_val=255):
     
 
 
-def quantize_error(error, step , min_val=-255, q_levels=None):
+def quantize_error(error, step , min_val=-255, q_levels=None): #َََQ
     """Quantize prediction error."""
     q_error = np.floor((error - min_val) / step).astype(np.int16)
     q_error = np.clip(q_error, 0, q_levels - 1)  # Ensure within range
     return q_error
 
 
-def dequantize(q_error, step, min_val=-255):
+def dequantize(q_error, step, min_val=-255):#Q-1
     """Convert quantized values back to integers."""
     deq = ((q_error + 0.5) * step + min_val).astype(np.int16)      # midpoint reconstruction
     return deq
@@ -183,7 +183,36 @@ def reconstruct_image(predicted, dequantized):
     reconstructed = np.clip(reconstructed, 0, 255).astype(np.uint8)
     return reconstructed
 
+##############################################
+#          DISPLAY REQUIRED IMAGES
+##############################################
 
+def show_results(original, predicted, error, q_error, deq, final):
+    """
+    Display the six required images:
+     1. Original
+     2. Predicted
+     3. Error
+     4. Quantized error
+     5. De-quantized error
+     6. Decompressed image
+    """
+    titles = ["Original",
+            "Predicted",
+            "Error",
+            "Quantized Error",
+            "Dequantized Error",
+            "Reconstructed"]
+    images = [original, predicted, error, q_error, deq, final]
+    plt.figure(figsize=(12,8))
+    for i in range(6):
+        plt.subplot(2, 3, i+1)
+        plt.imshow(images[i], cmap='gray')
+        plt.title(titles[i])
+        plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+    
 ##############################################
 #         COMPRESSION / DECOMPRESSION
 ##############################################
@@ -200,31 +229,59 @@ def compress_image():
     - Display 6 images
     - Calculate compression ratio
     """
-    pass
+    print("\n -----Compressing Image----")
+    path = get_image_path()
+    bits = get_quantization_bits()
+    
+    original = load_image(path)
+    predicted = predictor_2d(original)
+    error_img = compute_error(original, predicted)
+    
+    step, q_levels, binary_codes, dequant_vals = compute_quantization_params(bits)
+    q_error = quantize_error(error_img, step, q_levels=q_levels)
+    deq = dequantize(q_error, step)
 
+    final = reconstruct_image(predicted, deq)
+
+    np.savez("compressed_output.npz",
+            q_error=q_error,
+            predicted=predicted,
+            bits=bits,
+            shape=original.shape)
+    print("Compressed file saved : compressed_output.npz")
+    
+    original_bits = original.size*8
+    compressed_bits = original.size * bits
+    ratio = compute_compression_ratio(original_bits, compressed_bits)
+
+    
+    print("Compression Ratio =", round(ratio, 2), ":1")
+    
+    show_results(original, predicted, error_img, q_error, deq, final)
 
 def decompress_image():
     """Reverse steps for decompression."""
-    pass
+    print("\n -----Decompressing Image----")
+    
+    data = np.load("compressed_output.npz")
+    q_error = data["q_error"]
+    predicted  = data ["predicted"]
+    bits = int(data["bits"])
+    shape =  data["shape"]
+    
+    step, q_levels, binary_codes, dequant_vals = compute_quantization_params(bits)
+    deq = dequantize(q_error, step)
+    
+    final = reconstruct_image(predicted, deq)
+    
+    show_results(final, predicted, final - predicted, q_error, deq, final)
+    
+    save_image(final, "decompressed_image.png")
+    print("Decompressed image saved : decompressed_image.png")
 
+    
 
-##############################################
-#          DISPLAY REQUIRED IMAGES
-##############################################
-
-def show_results(original, predicted, error, q_error, deq, final):
-    """
-    Display the six required images:
-     1. Original
-     2. Predicted
-     3. Error
-     4. Quantized error
-     5. De-quantized error
-     6. Decompressed image
-    """
-    pass
-
-
+    
 ##############################################
 #          COMPRESSION RATIO
 ##############################################
