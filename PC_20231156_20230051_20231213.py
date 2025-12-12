@@ -164,19 +164,19 @@ def show_results(original, predicted, error, q_error, deq, reconstructed):
 ##############################################
 def compress_image():
     print("\n----- Compressing Image -----")
-    path = get_image_path()
-    bits = get_quantization_bits()
+    path = get_image_path()  # Ask user for image path
+    bits = get_quantization_bits()  # Ask user for number of bits for quantization
 
-    original = load_image(path)
-    is_color = original.ndim == 3
+    original = load_image(path)  # Load image as RGB numpy array
+    is_color = original.ndim == 3  # Check if image is color or grayscale
     print(f"Image shape: {original.shape} → {'RGB' if is_color else 'Grayscale'}")
 
-    predicted = predictor_2d(original)
-    error = compute_error(original, predicted)
+    predicted = predictor_2d(original)  # Compute 2D adaptive prediction
+    error = compute_error(original, predicted)  # Compute prediction error
 
-    step, q_levels = compute_quantization_params(bits)
+    step, q_levels = compute_quantization_params(bits)  # Compute quantization step and levels
 
-    # Quantize
+    # Quantize the error
     if is_color:
         q_error = np.zeros_like(error, dtype=np.int16)
         for c in range(3):
@@ -184,7 +184,7 @@ def compress_image():
     else:
         q_error = quantize_error(error, step, q_levels)
 
-    # Dequantize for display
+    # Dequantize the error for display
     if is_color:
         deq = np.zeros_like(q_error, dtype=np.int16)
         for c in range(3):
@@ -192,33 +192,38 @@ def compress_image():
     else:
         deq = dequantize(q_error, step)
 
-    reconstructed = reconstruct_image(predicted, deq)
+    reconstructed = reconstruct_image(predicted, deq)  # Reconstruct image from predicted + dequantized error
 
+    # Save compressed data to file for later decompression
     np.savez("compressed_output.npz",
              q_error=q_error, predicted=predicted, bits=bits,
              shape=original.shape, is_color=is_color)
 
-    ratio = (original.size * 8) / (q_error.size * bits)
+    ratio = (original.size * 8) / (q_error.size * bits)  # Compute compression ratio
     print(f"Compressed file → compressed_output.npz")
     print(f"Compression Ratio = {ratio:.2f} : 1")
 
+    # Display results (Original, Predicted, Error, Quantized Error, Dequantized Error, Reconstructed)
     show_results(original, predicted, error, q_error, deq, reconstructed)
+
 
 def decompress_image():
     print("\n----- Decompressing Image -----")
     try:
-        data = np.load("compressed_output.npz")
+        data = np.load("compressed_output.npz")  # Load compressed file
     except FileNotFoundError:
         print("No compressed file found!")
         return
 
+    # Extract data from the file
     q_error = data["q_error"]
     predicted = data["predicted"]
     bits = int(data["bits"])
     is_color = data.get("is_color", False)
 
-    step, _ = compute_quantization_params(bits)
+    step, _ = compute_quantization_params(bits)  # Recompute quantization step
 
+    # Dequantize the error
     if is_color:
         deq = np.zeros_like(q_error, dtype=np.int16)
         for c in range(3):
@@ -226,10 +231,13 @@ def decompress_image():
     else:
         deq = dequantize(q_error, step)
 
+    # Reconstruct the final image and save it
     final = reconstruct_image(predicted, deq)
     save_image(final, "decompressed_image.png")
     print("Decompressed image saved → decompressed_image.png")
-    show_results(final, predicted, final-predicted.astype(np.int16), q_error, deq, final)
+
+    # No visualization here to avoid showing the 6 images twice
+
 
 ##############################################
 # START
