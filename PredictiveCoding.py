@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 # MAIN MENU
 ##############################################
 def main_menu():
-    print("\n============ Vector Quantization Menu ============")
+    print("\n============ Predictive Coding Menu ============")
     print("1. Compress Image (Grayscale or RGB)")
     print("2. Decompress Image")
     print("3. Exit")
